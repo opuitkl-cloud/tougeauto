@@ -1,4 +1,4 @@
-# EduCoder 自动做题
+# 头歌自动做题
 
 通过 Playwright 操控浏览器，自动从 EduCoder 读取编程题、调用 DeepSeek 生成答案、提交评测，支持逐题自动完成。
 
