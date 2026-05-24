@@ -1,0 +1,9 @@
+# 运行日志
+educoder_auto.log
+
+# 浏览器登录态缓存
+browser_state.json
+
+# Python 缓存
+__pycache__/
+*.pyc
