@@ -103,15 +103,10 @@ class TaskSubmitter:
         return result
 
     async def wait_with_skip(self, delay: int):
-        """等待指定秒数，按回车可跳过
-
-        第一阶段：延迟期间按回车立即跳过；
-        第二阶段：延迟结束后按回车继续。
-        """
+        """等待指定秒数，期间按回车可跳过"""
         mins, secs = divmod(delay, 60)
         print(f"[反检测] 等待 {mins}分{secs}秒 (回车跳过)...", flush=True)
 
-        # 第一阶段：非阻塞检测回车
         waited = 0.0
         while waited < delay:
             await asyncio.sleep(0.3)
@@ -124,13 +119,8 @@ class TaskSubmitter:
                         print(" 跳过!")
                         return
             except ImportError:
-                # 非 Windows：直接完整等待，依赖后续第二阶段
                 pass
-
-        # 第二阶段：等待用户按回车确认
-        print("[反检测] 等待结束，请按回车继续...", end="", flush=True)
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, sys.stdin.readline)
+        print("[反检测] 等待结束，自动继续")
 
     async def _navigate_to_task(self, task_url: str):
         """导航到题目页面"""
