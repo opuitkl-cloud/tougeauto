@@ -1,11 +1,12 @@
 """Playwright 浏览器自动化 - 题目读取、代码提交、结果获取"""
 
 import os
+import sys
 import time
 import random
 import asyncio
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
-from config import HEADLESS, BROWSER_TIMEOUT, EVALUATE_TIMEOUT
+from config import BROWSER_TIMEOUT, EVALUATE_TIMEOUT
 
 MAIN_SITE = "https://www.educoder.net"
 STORAGE_FILE = os.path.join(os.path.dirname(__file__), "browser_state.json")
@@ -30,8 +31,9 @@ class BrowserSession:
         if os.path.exists(STORAGE_FILE):
             storage_state = STORAGE_FILE
 
+        import config as _cfg
         self.browser = await self.playwright.chromium.launch(
-            headless=HEADLESS,
+            headless=_cfg.HEADLESS,
             args=["--disable-blink-features=AutomationControlled"],
         )
         self.context = await self.browser.new_context(
@@ -101,22 +103,34 @@ class TaskSubmitter:
         return result
 
     async def wait_with_skip(self, delay: int):
-        """等待指定秒数，按回车可跳过"""
-        import sys
+        """等待指定秒数，按回车可跳过
 
+        第一阶段：延迟期间按回车立即跳过；
+        第二阶段：延迟结束后按回车继续。
+        """
         mins, secs = divmod(delay, 60)
-        print(f"[反检测] 等待 {mins}分{secs}秒 (按回车跳过)...", end="", flush=True)
+        print(f"[反检测] 等待 {mins}分{secs}秒 (回车跳过)...", flush=True)
 
+        # 第一阶段：非阻塞检测回车
+        waited = 0.0
+        while waited < delay:
+            await asyncio.sleep(0.3)
+            waited += 0.3
+            try:
+                import msvcrt
+                while msvcrt.kbhit():
+                    key = msvcrt.getch()
+                    if key in (b"\r", b"\n"):
+                        print(" 跳过!")
+                        return
+            except ImportError:
+                # 非 Windows：直接完整等待，依赖后续第二阶段
+                pass
+
+        # 第二阶段：等待用户按回车确认
+        print("[反检测] 等待结束，请按回车继续...", end="", flush=True)
         loop = asyncio.get_event_loop()
-        try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, sys.stdin.readline),
-                timeout=delay,
-            )
-            print(" 跳过!")
-        except asyncio.TimeoutError:
-            print()
-            print("[反检测] 等待结束，自动继续")
+        await loop.run_in_executor(None, sys.stdin.readline)
 
     async def _navigate_to_task(self, task_url: str):
         """导航到题目页面"""
@@ -162,11 +176,37 @@ class TaskSubmitter:
 
     async def _paste_code(self, code: str) -> bool:
         """通过剪贴板粘贴代码，保留所有格式和缩进"""
-        # 写入剪贴板
+        # 写入剪贴板（兼容无头/有头模式）
+        safe = code.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
         try:
-            await self.page.evaluate(f"""
-                navigator.clipboard.writeText(`{code.replace('`', '\\`')}`)
+            ok = await self.page.evaluate(f"""
+                (() => {{
+                    try {{
+                        // 方式1: navigator.clipboard (有头模式)
+                        navigator.clipboard.writeText(`{safe}`);
+                        return true;
+                    }} catch(e1) {{
+                        try {{
+                            // 方式2: execCommand (无头模式)
+                            const ta = document.createElement('textarea');
+                            ta.value = `{safe}`;
+                            ta.style.position = 'fixed';
+                            ta.style.opacity = '0';
+                            ta.style.pointerEvents = 'none';
+                            document.body.appendChild(ta);
+                            ta.focus();
+                            ta.select();
+                            const ok = document.execCommand('copy');
+                            ta.remove();
+                            return ok;
+                        }} catch(e2) {{
+                            return false;
+                        }}
+                    }}
+                }})()
             """)
+            if not ok:
+                return False
         except Exception:
             return False
         await asyncio.sleep(0.3)

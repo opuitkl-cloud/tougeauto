@@ -3,7 +3,7 @@
 用法:
     python main.py                     # 交互模式（输入 URL）
     python main.py <题目URL>           # 直接运行（全自动）
-    python main.py --headless <URL>    # 无头模式
+    python main.py --headless <URL>    # 无头模式（跳过询问）
 """
 
 import sys
@@ -12,6 +12,7 @@ import random
 import logging
 import asyncio
 import argparse
+import threading
 from problem_reader import ProblemReader, ProblemInfo
 from deepseek_solver import DeepSeekSolver
 from task_submitter import BrowserSession, TaskSubmitter
@@ -50,9 +51,28 @@ def print_problem(info: ProblemInfo):
     log.info("题目: %s", info.title)
 
 
-async def run_loop(task_url: str):
+async def run_loop(task_url: str,
+                   stop_event: threading.Event | None = None):
     """从第一题开始逐题做题，已通过的跳过"""
     log.info("开始处理: %s", task_url)
+
+    def stopped():
+        return stop_event is not None and stop_event.is_set()
+
+    import config
+    import os
+
+    STORAGE_FILE = os.path.join(os.path.dirname(__file__), "browser_state.json")
+    has_state = os.path.exists(STORAGE_FILE)
+
+    # 有登录态缓存 → 启动前问无头（不用重启）
+    if has_state and not config.HEADLESS:
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(
+            None, lambda: input("\n是否进入无头模式? (y/N): ")
+        )
+        if resp.strip().lower() == "y":
+            config.HEADLESS = True
 
     bs = BrowserSession()
     solver = None
@@ -63,6 +83,25 @@ async def run_loop(task_url: str):
         submitter = TaskSubmitter(bs)
         await submitter.page.goto(task_url, wait_until="domcontentloaded")
         await asyncio.sleep(2)
+
+        # 首次使用 → 登录后问无头
+        if not has_state and not config.HEADLESS:
+            print("\n请在浏览器中完成登录")
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(
+                None, lambda: input("完成后输入 y 进入无头模式，直接回车保持可见: ")
+            )
+            if resp.strip().lower() == "y":
+                print("\n[切换] 保存登录态，切换到无头模式...")
+                await bs.save_state()
+                await bs.close()
+                config.HEADLESS = True
+                bs = BrowserSession()
+                await bs.start()
+                submitter = TaskSubmitter(bs)
+                await submitter.page.goto(task_url, wait_until="domcontentloaded")
+                await asyncio.sleep(2)
+                print("[切换] 已进入无头模式\n")
 
         # 回到第一题
         print("\n[定位] 回到第一题...")
@@ -77,6 +116,10 @@ async def run_loop(task_url: str):
 
         # 逐题做题
         while current_url:
+            if stopped():
+                print("\n[停止] 用户中断")
+                break
+
             print(f"\n{'='*60}")
             print(f"  当前题: {current_url}")
             print(f"{'='*60}")
@@ -92,6 +135,10 @@ async def run_loop(task_url: str):
                     print(f">>> 下一题: {current_url}")
                 continue
 
+            if stopped():
+                print("\n[停止] 用户中断")
+                break
+
             # 1. 读题
             print("\n[1/4] 读取题目...")
             reader = ProblemReader()
@@ -102,6 +149,10 @@ async def run_loop(task_url: str):
                 info.description = await bs.page.evaluate(
                     "document.body?.innerText?.substring(0, 5000) || ''"
                 )
+
+            if stopped():
+                print("\n[停止] 用户中断")
+                break
 
             # 2. DeepSeek 求解
             if solver is None:
@@ -122,6 +173,10 @@ async def run_loop(task_url: str):
             print(code[:600] + ("..." if len(code) > 600 else ""))
             print("-" * 40)
             log.info("获取代码 %d 字符: %s", len(code), current_url)
+
+            if stopped():
+                print("\n[停止] 用户中断")
+                break
 
             # 3. 提交
             print("\n[3/4] 提交到 EduCoder...")
@@ -163,7 +218,7 @@ async def run_loop(task_url: str):
 async def main():
     parser = argparse.ArgumentParser(description="EduCoder 自动做题程序")
     parser.add_argument("url", nargs="?", help="题目 URL")
-    parser.add_argument("--headless", action="store_true", help="无头模式")
+    parser.add_argument("--headless", action="store_true", help="无头模式（跳过询问）")
     args = parser.parse_args()
 
     log_path = setup_logging()
@@ -172,6 +227,9 @@ async def main():
     print("[提示] 输入做题页面的网址\n")
 
     if args.url:
+        if args.headless:
+            import config
+            config.HEADLESS = True
         await run_loop(args.url)
     else:
         while True:
@@ -187,7 +245,11 @@ async def main():
                 log.info("用户退出")
                 break
             if u:
-                await run_loop(u)
+                try:
+                    await run_loop(u)
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
 
 
 if __name__ == "__main__":

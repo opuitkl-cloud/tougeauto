@@ -13,9 +13,12 @@
   ⑤ 自动进入下一题
 ```
 
+已通过的题目会自动跳过，不做重复提交。
+
 ## 环境要求
 
 - Python 3.8+
+- Windows
 - Chrome / Chromium 浏览器
 
 ## 安装
@@ -37,6 +40,12 @@ python main.py https://www.educoder.net/tasks/xxxxx
 # 无头模式（不显示浏览器窗口）
 python main.py --headless https://www.educoder.net/tasks/xxxxx
 ```
+
+### 无头模式说明
+
+有已保存的登录态时，启动前询问是否进入无头模式（无需重启浏览器）。
+首次使用则先以可见窗口启动，登录后询问是否切换到无头模式。
+加 `--headless` 参数可跳过询问，直接全程无头。
 
 ## 首次使用
 
